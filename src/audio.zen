@@ -1,0 +1,172 @@
+// Caller owns all storage. Samples, real, imaginary and magnitude buffers must
+// not overlap. Scratch buffers have count elements; magnitudes has count/2+1.
+Ptr = std.mem
+String, str_at = std.text
+
+Math = c.bind("math.h", {
+    cos* = (angle: f64) f64
+    sin* = (angle: f64) f64
+    sqrt* = (value: f64) f64
+})
+
+number = (value: usize) f64 {
+    value.to_u64().to_i32().match({ Ok(v) => v.to_f64(), None => 0.0 })
+}
+
+// Periodic Hann window, normalized to peak sinusoid amplitude. DC and Nyquist
+// are not doubled. Samples are borrowed and never modified. No allocations.
+analyze* = (
+    samples    : Ptr<f64>,
+    real       : Ptr<f64>,
+    imaginary  : Ptr<f64>,
+    magnitudes : Ptr<f64>,
+    count      : usize
+) bool {
+    valid ::= count >= 4 && count <= 1048576;
+    size  ::= count;
+    loop(size > 1 && valid, (h) {
+        (size % 2 != 0).then(() { valid = false; });
+        size = size / 2;
+    });
+    (valid && !samples.is_null() && !real.is_null() &&
+     !imaginary.is_null() && !magnitudes.is_null()).match({
+        false => false,
+        true  => {
+            scale = number(count);
+            Range(0, count).loop((i) {
+                window = 0.5 - 0.5 * Math.cos(
+                    6.283185307179586 * number(i) / scale
+                );
+                real.write(i, samples.read(i) * window);
+                imaginary.write(i, 0.0);
+            });
+            reversed ::= 0;
+            Range(1, count).loop((i) {
+                bit ::= count / 2;
+                loop(reversed >= bit && bit > 0, (h) {
+                    reversed = reversed - bit;
+                    bit      = bit / 2;
+                });
+                reversed = reversed + bit;
+                (i < reversed).then(() {
+                    saved = real.read(i);
+                    real.write(i, real.read(reversed));
+                    real.write(reversed, saved);
+                });
+            });
+            width ::= 2;
+            loop(width <= count, (h) {
+                half           = width / 2;
+                angle          = -6.283185307179586 / number(width);
+                step_real      = Math.cos(angle);
+                step_imaginary = Math.sin(angle);
+                start ::= 0;
+                loop(start < count, (block) {
+                    wr ::= 1.0;
+                    wi ::= 0.0;
+                    Range(0, half).loop((offset) {
+                        even = start + offset;
+                        odd  = even + half;
+                        tr   = wr * real.read(odd) - wi * imaginary.read(odd);
+                        ti   = wr * imaginary.read(odd) + wi * real.read(odd);
+                        er   = real.read(even);
+                        ei   = imaginary.read(even);
+                        real.write(even, er + tr);
+                        imaginary.write(even, ei + ti);
+                        real.write(odd, er - tr);
+                        imaginary.write(odd, ei - ti);
+                        next_wr = wr * step_real - wi * step_imaginary;
+                        wi      = wr * step_imaginary + wi * step_real;
+                        wr      = next_wr;
+                    });
+                    start = start + width;
+                });
+                width = width * 2;
+            });
+            Range(0, count / 2 + 1).loop((i) {
+                re     = real.read(i);
+                im     = imaginary.read(i);
+                factor = (i == 0 || i == count / 2).match({true => 2.0, false => 4.0});
+                magnitudes.write(
+                    i,
+                    Math.sqrt(re * re + im * im) * factor / scale
+                );
+            });
+            true
+        },
+    })
+}
+
+// Equal-width frequency bands excluding DC. Each output is the maximum
+// normalized amplitude of its bins, not power or decibels. Input and output
+// buffers must not overlap; output has count elements.
+bands* = (
+    magnitudes : Ptr<f64>,
+    bins       : usize,
+    output     : Ptr<f64>,
+    count      : usize
+) bool {
+    (bins < 2 || bins > 524289 || count == 0 || count > bins - 1 ||
+     magnitudes.is_null() || output.is_null()).match({
+        true  => false,
+        false => {
+            Range(0, count).loop((band) {
+                start = 1 + band * (bins - 1) / count;
+                end   = 1 + (band + 1) * (bins - 1) / count;
+                peak ::= 0.0;
+                Range(start, end).loop((i) {
+                    value = magnitudes.read(i);
+                    (value > peak).then(() { peak = value; });
+                });
+                output.write(band, peak);
+            });
+            true
+        },
+    })
+}
+
+WavError* = InvalidRate | InvalidSize | MissingSamples | UnsupportedByteOrder
+WavEncodeError* = WavError | AllocError
+
+little = (out :: String, value: usize, bytes: usize) Res<(), AllocError> {
+    rest ::= value;
+    Range(0, bytes).loop((i) {
+        (rest % 256).to_u8().match({Ok(byte) => out.add(byte), None => Ok(())}).try();
+        rest = rest / 256;
+    });
+    Ok(())
+}
+
+// Mono IEEE float WAV (format 3), including fmt extension and fact sample count.
+// Supported native targets are little-endian; reject other byte order explicitly.
+encode_wav* = (a: Alloc, samples: Ptr<f32>, count: usize, rate: u32)
+              Res<String, WavEncodeError> {
+    (rate > 0 && rate <= 1073741823).ensure(WavError.InvalidRate).try();
+    (count <= 1073741811).ensure(WavError.InvalidSize).try();
+    (count == 0 || !samples.is_null()).ensure(WavError.MissingSamples).try();
+    probe = a.create<u32>().try();
+    @scope.defer(() { a.free(probe); });
+    probe.write(0, 1);
+    (probe.to<u8>().read(0) == 1).ensure(WavError.UnsupportedByteOrder).try();
+    out ::= a.String().try();
+    out.add("RIFF").try();
+    little(out, 50 + count * 4, 4).try();
+    out.add("WAVEfmt ").try();
+    little(out, 18, 4).try();
+    little(out, 3, 2).try();
+    little(out, 1, 2).try();
+    little(out, rate.to_usize(), 4).try();
+    little(out, rate.to_usize() * 4, 4).try();
+    little(out, 4, 2).try();
+    little(out, 32, 2).try();
+    little(out, 0, 2).try();
+    out.add("fact").try();
+    little(out, 4, 4).try();
+    little(out, count, 4).try();
+    out.add("data").try();
+    little(out, count * 4, 4).try();
+    (count > 0).then(
+        () { out.add(str_at(samples.to<u8>(), count * 4)).try(); }
+    );
+    Ok(out)
+}

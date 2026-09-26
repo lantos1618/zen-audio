@@ -1,0 +1,12 @@
+Builder, BuildError = std.build
+build = (b :: Builder) Res<(), BuildError> {
+    audio = b.lib(
+        "audio",
+        {src: Path("../../src/audio.zen"), libs: ["m"], paths: []}
+    ).try();
+    b.exe(
+        "wav",
+        {src: Path("main.zen"), deps: [audio], out: Ok(Path("../../build/wav-test"))}
+    ).try();
+    Ok(())
+}

@@ -1,0 +1,37 @@
+analyze, bands = audio
+Math = c.bind("math.h", { sin* = (angle: f64) f64 })
+main = (env: Env) Res<i32, AllocError> {
+    a          = env.mem.alloc();
+    samples    = a.realloc<f64>(null_ptr<f64>(), 1024).try();
+    real       = a.realloc<f64>(null_ptr<f64>(), 1024).try();
+    imaginary  = a.realloc<f64>(null_ptr<f64>(), 1024).try();
+    magnitudes = a.realloc<f64>(null_ptr<f64>(), 513).try();
+    levels     = a.realloc<f64>(null_ptr<f64>(), 16).try();
+    phase ::= 0.0;
+    Range(0, 1024).loop((i) {
+        samples.write(i, Math.sin(phase));
+        phase = phase + 6.283185307179586 * 32.0 / 1024.0;
+    });
+    valid ::= analyze(samples, real, imaginary, magnitudes, 1024);
+    valid = valid && magnitudes.read(32) > 0.999999 && magnitudes.read(32) < 1.000001;
+    valid = valid && magnitudes.read(31) > 0.499999 && magnitudes.read(31) < 0.500001;
+    valid = valid && magnitudes.read(30) < 0.000001;
+    valid = valid && bands(magnitudes, 513, levels, 16);
+    valid = valid && levels.read(0) > 0.999999;
+    Range(0, 1024).loop((i) { samples.write(i, 0.0); });
+    valid = valid && analyze(samples, real, imaginary, magnitudes, 1024);
+    Range(0, 513).loop((i) { valid = valid && magnitudes.read(i) == 0.0; });
+    Range(0, 1024).loop((i) { samples.write(i, 1.0); });
+    valid = valid && analyze(samples, real, imaginary, magnitudes, 1024);
+    valid = valid && magnitudes.read(0) > 0.999999 && magnitudes.read(0) < 1.000001;
+    Range(0, 1024).loop((i) {
+        samples.write(i, (i % 2 == 0).match({true => 1.0, false => -1.0}));
+    });
+    valid = valid && analyze(samples, real, imaginary, magnitudes, 1024);
+    valid = valid && magnitudes.read(512) > 0.999999 && magnitudes.read(512) < 1.000001;
+    valid = valid && !analyze(samples, real, imaginary, magnitudes, 1000);
+    valid = valid && !analyze(samples, real, imaginary, magnitudes, 0);
+    valid = valid && !bands(magnitudes, 513, levels, 0);
+    println("spectrum FFT/window/normalization: {}", valid);
+    Ok(valid.match({true => 0, false => 1}))
+}

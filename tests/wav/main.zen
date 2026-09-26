@@ -1,0 +1,31 @@
+encode_wav, WavError = audio
+main = (env: Env) Res<i32, AllocError> {
+    a       = env.mem.alloc();
+    samples = a.realloc<f32>(null_ptr<f32>(), 4).try();
+    samples.write(0, 0.0);
+    samples.write(1, 0.5);
+    samples.write(2, -0.5);
+    samples.write(3, 1.0);
+    code ::= 0;
+    encode_wav(a, samples, 4, 16000).match({
+        Ok(wav) => { env.fs.write(
+            "test.wav",
+            wav.view()
+        ).match({Ok(_) => {}, Err(_) => {code = 1;}}); },
+        Err(_)  => { code = 2; },
+    });
+    encode_wav(a, samples, 4, 0).match({Ok(_) => {code = 3;}, Err(_) => {}});
+    encode_wav(
+        a,
+        null_ptr<f32>(),
+        4,
+        16000
+    ).match({Ok(_) => {code = 4;}, Err(_) => {}});
+    encode_wav(
+        a,
+        samples,
+        1073741812,
+        16000
+    ).match({Ok(_) => {code = 5;}, Err(_) => {}});
+    Ok(code)
+}
