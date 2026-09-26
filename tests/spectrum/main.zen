@@ -1,5 +1,5 @@
 analyze, bands = audio
-Math = c.bind("math.h", { sin* = (angle: f64) f64 })
+sin = std.math
 main = (env: Env) Res<i32, AllocError> {
     a          = env.mem.alloc();
     samples    = a.realloc<f64>(null_ptr<f64>(), 1024).try();
@@ -9,7 +9,7 @@ main = (env: Env) Res<i32, AllocError> {
     levels     = a.realloc<f64>(null_ptr<f64>(), 16).try();
     phase ::= 0.0;
     Range(0, 1024).loop((i) {
-        samples.write(i, Math.sin(phase));
+        samples.write(i, sin(phase));
         phase = phase + 6.283185307179586 * 32.0 / 1024.0;
     });
     valid ::= analyze(samples, real, imaginary, magnitudes, 1024);

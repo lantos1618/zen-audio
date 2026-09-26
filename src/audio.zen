@@ -3,11 +3,7 @@
 Ptr = std.mem
 String, str_at = std.text
 
-Math = c.bind("math.h", {
-    cos* = (angle: f64) f64
-    sin* = (angle: f64) f64
-    sqrt* = (value: f64) f64
-})
+cos, sin, sqrt = std.math
 
 number = (value: usize) f64 {
     value.to_u64().to_i32().match({ Ok(v) => v.to_f64(), None => 0.0 })
@@ -34,9 +30,7 @@ analyze* = (
         true  => {
             scale = number(count);
             Range(0, count).loop((i) {
-                window = 0.5 - 0.5 * Math.cos(
-                    6.283185307179586 * number(i) / scale
-                );
+                window = 0.5 - 0.5 * cos(6.283185307179586 * number(i) / scale);
                 real.write(i, samples.read(i) * window);
                 imaginary.write(i, 0.0);
             });
@@ -58,8 +52,8 @@ analyze* = (
             loop(width <= count, (h) {
                 half           = width / 2;
                 angle          = -6.283185307179586 / number(width);
-                step_real      = Math.cos(angle);
-                step_imaginary = Math.sin(angle);
+                step_real      = cos(angle);
+                step_imaginary = sin(angle);
                 start ::= 0;
                 loop(start < count, (block) {
                     wr ::= 1.0;
@@ -87,10 +81,7 @@ analyze* = (
                 re     = real.read(i);
                 im     = imaginary.read(i);
                 factor = (i == 0 || i == count / 2).match({true => 2.0, false => 4.0});
-                magnitudes.write(
-                    i,
-                    Math.sqrt(re * re + im * im) * factor / scale
-                );
+                magnitudes.write(i, sqrt(re * re + im * im) * factor / scale);
             });
             true
         },
