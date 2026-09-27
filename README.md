@@ -96,3 +96,9 @@ can save `wav.view()` through `env.fs.write`. This does not resample audio.
 
 Build `tests/wav`, then run `python3 tests/wav/check.py` to independently decode
 the header, chunk sizes, sample rate, and exact float samples.
+
+## Performance baseline
+
+See [benchmark instructions](benchmarks/README.md) and
+[measured results](benchmarks/RESULTS.md) for the Zen FFT, voice-band mapping,
+and smoothing hot loop. Timings exclude devices, rendering, and speech inference.
