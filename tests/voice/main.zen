@@ -1,0 +1,72 @@
+analyze, voice_bands, smooth_levels = audio
+sin = std.math
+main = (env: Env) Res<i32, AllocError> {
+    a          = env.mem.alloc();
+    samples    = a.realloc<f64>(null_ptr<f64>(), 1024).try();
+    real       = a.realloc<f64>(null_ptr<f64>(), 1024).try();
+    imaginary  = a.realloc<f64>(null_ptr<f64>(), 1024).try();
+    magnitudes = a.realloc<f64>(null_ptr<f64>(), 513).try();
+    levels     = a.realloc<f64>(null_ptr<f64>(), 34).try();
+    state      = a.realloc<f64>(null_ptr<f64>(), 32).try();
+    levels.write(0, -7.0);
+    levels.write(33, -7.0);
+    output = levels.offset(1);
+    valid           ::= true;
+    previous: usize ::= 0;
+    Range(0, 3).loop((tone) {
+        // Bin-centered 125, 1000 and 3000 Hz at 16 kHz.
+        frequency = tone.match({0 => 125.0, 1 => 1000.0, _ => 3000.0});
+        phase ::= 0.0;
+        Range(0, 1024).loop((i) {
+            samples.write(i, 0.1 * sin(phase));
+            phase = phase + 6.283185307179586 * frequency / 16000.0;
+        });
+        valid = analyze(samples, real, imaginary, magnitudes, 1024) && valid;
+        valid = voice_bands(magnitudes, 513, 16000, output, 32) && valid;
+        peak      ::= 0.0;
+        at: usize ::= 0;
+        Range(0, 32).loop((i) {
+            level = output.read(i);
+            valid = valid && level >= 0.0 && level <= 1.0;
+            (level > peak).then(() { peak = level; at = i; });
+        });
+        valid           = valid && peak > 0.899999 && peak < 0.900001;
+        valid           = valid && (tone == 0 || at > previous);
+        expected: usize = tone.match({0 => 0, 1 => 13, _ => 27});
+        valid           = valid && at == expected;
+        previous        = at;
+    });
+    Range(0, 513).loop((i) { magnitudes.write(i, 0.0); });
+    valid = voice_bands(magnitudes, 513, 16000, output, 32) && valid;
+    Range(0, 32).loop((i) { valid = valid && output.read(i) == 0.0; });
+    // Below-floor amplitude, ceiling saturation, and ignored DC/out-of-range.
+    magnitudes.write(64, 0.0001);
+    magnitudes.write(0, 1.0);
+    magnitudes.write(400, 1.0);
+    valid = voice_bands(magnitudes, 513, 16000, output, 32) && valid;
+    Range(0, 32).loop((i) { valid = valid && output.read(i) == 0.0; });
+    magnitudes.write(64, 1.0);
+    valid = voice_bands(magnitudes, 513, 16000, output, 32) && valid;
+    saturated ::= false;
+    Range(0, 32).loop((i) { saturated = saturated || output.read(i) == 1.0; });
+    valid = valid && saturated && levels.read(0) == -7.0 && levels.read(33) == -7.0;
+    valid = !voice_bands(magnitudes, 513, 7999, output, 32) && valid;
+    valid = !voice_bands(magnitudes, 0, 16000, output, 32) && valid;
+    valid = !voice_bands(magnitudes, 513, 16000, output, 0) && valid;
+    valid = !voice_bands(null_ptr<f64>(), 513, 16000, output, 32) && valid;
+    Range(0, 32).loop((i) { output.write(i, 1.0); state.write(i, 0.0); });
+    valid = smooth_levels(output, state, 32, 0.035) && valid;
+    valid = valid && state.read(0) > 0.499999 && state.read(0) < 0.500001;
+    Range(0, 32).loop((i) { output.write(i, 0.0); });
+    valid = smooth_levels(output, state, 32, 0.180) && valid;
+    valid = valid && state.read(0) > 0.249999 && state.read(0) < 0.250001;
+    held  = state.read(0);
+    valid = smooth_levels(output, state, 32, 0.0) && valid;
+    valid = valid && state.read(0) == held;
+    valid = !smooth_levels(output, state, 32, -1.0) && valid;
+    valid = valid && state.read(0) == held;
+    valid = smooth_levels(output, state, 32, 1.0) && valid;
+    valid = valid && state.read(0) == 0.0;
+    println("voice mel/dBFS/smoothing: {}", valid);
+    Ok(valid.match({true => 0, false => 1}))
+}

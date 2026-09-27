@@ -3,7 +3,7 @@
 Ptr = std.mem
 String, str_at = std.text
 
-cos, sin, sqrt = std.math
+cos, sin, sqrt, log10 = std.math
 
 number = (value: usize) f64 {
     value.to_u64().to_i32().match({ Ok(v) => v.to_f64(), None => 0.0 })
@@ -110,6 +110,87 @@ bands* = (
                     (value > peak).then(() { peak = value; });
                 });
                 output.write(band, peak);
+            });
+            true
+        },
+    })
+}
+
+// Speech display: equal mel intervals from 80 Hz through 4 kHz. Magnitudes
+// are analyze's peak amplitudes; output is clamped -65..-15 dBFS mapped to 0..1.
+// Caller supplies distinct input/output buffers. No allocation or native calls
+// outside std.math. Empty frequency buckets remain zero.
+voice_bands* = (
+    magnitudes : Ptr<f64>,
+    bins       : usize,
+    rate       : u32,
+    output     : Ptr<f64>,
+    count      : usize
+) bool {
+    (bins < 3 || bins > 524289 || count == 0 || count > 128 ||
+     count > bins - 1 || rate < 8000 || rate > 192000 ||
+     magnitudes.is_null() || output.is_null()).match({
+        true  => false,
+        false => {
+            Range(0, count).loop((band) { output.write(band, 0.0); });
+            low        = log10(1.0 + 80.0 / 700.0);
+            span       = log10(1.0 + 4000.0 / 700.0) - low;
+            resolution = number(rate.to_usize()) / number(2 * (bins - 1));
+            band: usize ::= 0;
+            Range(1, bins).loop((i) {
+                frequency = number(i) * resolution;
+                (frequency >= 80.0 && frequency <= 4000.0).then(() {
+                    position = (log10(1.0 + frequency / 700.0) - low) / span;
+                    loop(band + 1 < count && position >= number(band + 1) / number(count), (h) {
+                        band = band + 1;
+                    });
+                    magnitude = magnitudes.read(i);
+                    (magnitude > output.read(band)).then(() { output.write(band, magnitude); });
+                });
+            });
+            Range(0, count).loop((i) {
+                peak  = output.read(i);
+                level = (peak <= 0.000562341325190349).match({
+                    true  => 0.0,
+                    false => (peak >= 0.1778279410038923).match({
+                        true  => 1.0,
+                        false => (20.0 * log10(peak) + 65.0) / 50.0,
+                    }),
+                });
+                output.write(i, level);
+            });
+            true
+        },
+    })
+}
+
+unit = (value: f64) f64 {
+    (value >= 0.0).match({
+        false => 0.0,
+        true  => (value > 1.0).match({true => 1.0, false => value}),
+    })
+}
+
+// Initialize state to zero once. Attack 35 ms, release 180 ms; backward-Euler
+// smoothing follows elapsed seconds. Gaps >=1 second snap to the current target.
+// Invalid elapsed/count/pointers leave state untouched. Buffers may be identical
+// but must not partially overlap. No allocation; targets/state normalize to 0..1.
+smooth_levels* = (
+    target  : Ptr<f64>,
+    state   : Ptr<f64>,
+    count   : usize,
+    elapsed : f64
+) bool {
+    (count == 0 || count > 128 || target.is_null() || state.is_null() ||
+     !(elapsed >= 0.0) || elapsed > f64.MAX).match({
+        true  => false,
+        false => {
+            Range(0, count).loop((i) {
+                current = unit(state.read(i));
+                desired = unit(target.read(i));
+                tau     = (desired > current).match({true => 0.035, false => 0.180});
+                alpha   = (elapsed >= 1.0).match({true => 1.0, false => elapsed / (tau + elapsed)});
+                state.write(i, unit(current + (desired - current) * alpha));
             });
             true
         },
