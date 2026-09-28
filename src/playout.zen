@@ -1,0 +1,71 @@
+// Pure mono PCM playout for 16 kHz voice. Caller owns a disjoint ring of
+// JITTER_PACKETS * PACKET_SAMPLES floats and a PACKET_SAMPLES output buffer.
+// Single-owner state: no allocation, native APIs, threads or retained input.
+Ptr = std.mem
+PACKET_SAMPLES*: usize = 320
+JITTER_PACKETS*: usize = 12
+PREFILL_PACKETS*: usize = 4
+FADE_SAMPLES*: usize = 80
+Playout* = {
+    ring: Ptr<f32>, head* :: usize = 0, count* :: usize = 0,
+    buffering* :: bool = true, last :: f32 = 0.0,
+    dropped* :: usize = 0, underruns* :: usize = 0,
+    reset* = (self :: @Self) () {
+        self.head = 0; self.count = 0; self.buffering = true;
+        self.last = 0.0; self.dropped = 0; self.underruns = 0;
+    }
+    push* = (self :: @Self, data: Ptr<f32>, count: usize) bool {
+        (count == PACKET_SAMPLES && !data.is_null()).match({
+            false => false,
+            true => (self.count < JITTER_PACKETS).match({
+                false => { self.dropped = self.dropped + 1; false },
+                true => {
+                    slot = (self.head + self.count) % JITTER_PACKETS;
+                    Range(0, PACKET_SAMPLES).loop((i) {
+                        self.ring.write(slot * PACKET_SAMPLES + i, data.read(i));
+                    });
+                    self.count = self.count + 1;
+                    true
+                },
+            }),
+        })
+    }
+
+    render* = (self :: @Self, output: Ptr<f32>) () {
+        recovering = self.buffering && self.count >= PREFILL_PACKETS;
+        recovering.then(() { self.buffering = false; });
+        (!self.buffering && self.count > 0).match({
+            true => {
+                gain: f32 ::= 0.0;
+                Range(0, PACKET_SAMPLES).loop((i) {
+                    sample ::= self.ring.read(self.head * PACKET_SAMPLES + i);
+                    (recovering && i < FADE_SAMPLES).then(() {
+                        sample = sample * gain;
+                        gain = gain + 0.012658228;
+                    });
+                    output.write(i, sample);
+                    self.last = sample;
+                });
+                self.head = (self.head + 1) % JITTER_PACKETS;
+                self.count = self.count - 1;
+            },
+            false => {
+                (!self.buffering).then(() { self.underruns = self.underruns + 1; });
+                self.buffering = true;
+                previous = self.last;
+                gain: f32 ::= 1.0;
+                Range(0, PACKET_SAMPLES).loop((i) {
+                    output.write(i, (i < FADE_SAMPLES).match({
+                        true => {
+                            value = (i == FADE_SAMPLES - 1).match({true => 0.0, false => previous * gain});
+                            gain = gain - 0.012658228;
+                            value
+                        },
+                        false => 0.0,
+                    }));
+                });
+                self.last = 0.0;
+            },
+        });
+    }
+}

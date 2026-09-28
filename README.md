@@ -102,3 +102,20 @@ the header, chunk sizes, sample rate, and exact float samples.
 See [benchmark instructions](benchmarks/README.md) and
 [measured results](benchmarks/RESULTS.md) for the Zen FFT, voice-band mapping,
 and smoothing hot loop. Timings exclude devices, rendering, and speech inference.
+
+## Speaking pitch
+
+`audio.pitch.estimate(samples, scratch)` estimates a monophonic fundamental
+from 1024 mono samples at 16 kHz, using 321 caller-owned scratch doubles.
+It uses normalized difference minima with an energy gate, returning zero for
+unvoiced/uncertain input. Its approximate detection range is 50–485 Hz.
+`Window` stores up to 32 timestamped estimates; record at 10 Hz and query
+`summary(now)` for voiced-only mean/min/max over three seconds.
+
+This estimates recent speaking pitch, not a person's complete singing range,
+gender, or clinical voice assessment. Background tones, multiple speakers and
+octave errors can affect readings. Tests in `tests/pitch` cover harmonic-rich
+tones, silence and window expiry; live-microphone accuracy is not yet measured.
+
+The pitch difference kernel uses `std.math.vector.squared_distance`, a portable
+Zen bulk operation auto-vectorized by the existing optimized C backend.

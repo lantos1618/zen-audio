@@ -1,0 +1,29 @@
+estimate, Window = audio.pitch
+sin = std.math
+Ptr, null_ptr = std.mem
+main = (env: Env) Res<i32, AllocError> {
+    a       = env.mem.alloc();
+    samples = a.realloc<f64>(null_ptr<f64>(), 1024).try();
+    scratch = a.realloc<f64>(null_ptr<f64>(), 321).try();
+    good ::= true;
+    Range(0, 4).loop((test) {
+        frequency = 80.0 + test.to_u64().to_i32().match({Ok(v) => v.to_f64(), None => 0.0}) * 100.0;
+        Range(0, 1024).loop((i) {
+            t = i.to_u64().to_i32().match({Ok(v) => v.to_f64(), None => 0.0}) / 16000.0;
+            samples.write(
+                i,
+                0.12 * sin(6.28318530718 * frequency * t) + 0.2 * sin(6.28318530718 * 2.0 * frequency * t)
+            );
+        });
+        hz   = estimate(samples, scratch);
+        good = good && hz > frequency - 3.0 && hz < frequency + 3.0;
+        println("expected {} detected {}", frequency, hz);
+    });
+    Range(0, 1024).loop((i) { samples.write(i, 0.0); });
+    good = good && estimate(samples, scratch) == 0.0;
+    window ::= Window.create(a).try();
+    window.record(1.0, 100.0); window.record(2.0, 200.0); window.record(3.0, 0.0);
+    good = good && window.summary(3.0).mean == 150.0 && window.summary(4.1).mean == 200.0 && window.summary(6.0).count == 0;
+    println("pitch and rolling voiced window: {}", good);
+    Ok(good.match({true => 0, false => 1}))
+}
