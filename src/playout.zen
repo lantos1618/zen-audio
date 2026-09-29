@@ -10,7 +10,7 @@ Playout* = {
     ring: Ptr<f32>, head* :: usize = 0, count* :: usize = 0,
     buffering* :: bool = true, last :: f32 = 0.0,
     dropped* :: usize = 0, underruns* :: usize = 0,
-    reset* = (self :: @Self) () {
+    reset* = (self :: @Self) {
         self.head = 0; self.count = 0; self.buffering = true;
         self.last = 0.0; self.dropped = 0; self.underruns = 0;
     }
@@ -31,7 +31,7 @@ Playout* = {
         })
     }
 
-    render* = (self :: @Self, output: Ptr<f32>) () {
+    render* = (self :: @Self, output: Ptr<f32>) {
         recovering = self.buffering && self.count >= PREFILL_PACKETS;
         recovering.then(() { self.buffering = false; });
         (!self.buffering && self.count > 0).match({

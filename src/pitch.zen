@@ -56,9 +56,9 @@ Window* = {
             count: 0
         ))
     }
-    reset* = (self :: @Self) () { self.next = 0; self.count = 0; }
+    reset* = (self :: @Self) { self.next = 0; self.count = 0; }
     // Sample at most 10 Hz; timestamps in seconds. Unvoiced estimates are zero.
-    record* = (self :: @Self, now: f64, hz: f64) () {
+    record* = (self :: @Self, now: f64, hz: f64) {
         self.values.write(self.next, hz); self.times.write(self.next, now);
         self.next = (self.next + 1) % 32;
         (self.count < 32).then(() { self.count = self.count + 1; });
